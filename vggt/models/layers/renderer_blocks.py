@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch.nn as nn
-from models.layers.attention import Attention
+from vggt.models.layers.attention import Attention
 from timm.models.vision_transformer import Mlp
 
 

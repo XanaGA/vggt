@@ -9,12 +9,12 @@ import time
 import einops
 import torch
 import torch.nn as nn
-from vggt.models.layers.embeddings import (
+from models.layers.embeddings import (
     init_weights_normal,
     PatchEmbed,
 )
-from vggt.models.layers.final_layer import FinalLayer
-from vggt.models.layers.renderer_blocks import (
+from models.layers.final_layer import FinalLayer
+from models.layers.renderer_blocks import (
     BidirectionalCrossAttentionBlock,
     CrossAttentionBlock,
     FullAttentionBlock,
@@ -71,6 +71,7 @@ class Renderer(nn.Module):
             patch_size=patch_size,
             out_channels=self.out_channels,
         )
+        self.output_act = nn.Sigmoid()
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -110,26 +111,25 @@ class Renderer(nn.Module):
         x = self.renderer_core(x, rec_tokens)
 
         x = x[:, self.patch_start_idx :, :]
+        x = self.final_layer(x)
+        x = self.output_act(x)
 
-        return x
-        # x = self.final_layer(x)
+        rendered_images = einops.rearrange(
+            x,
+            "(b v) (h w) (p1 p2 c) -> b v c (h p1) (w p2)",
+            v=v_target,
+            h=h_tgt // self.patch_size,
+            w=w_tgt // self.patch_size,
+            p1=self.patch_size,
+            p2=self.patch_size,
+            c=3,
+        )
 
-        # rendered_images = einops.rearrange(
-        #     x,
-        #     "(b v) (h w) (p1 p2 c) -> b v c (h p1) (w p2)",
-        #     v=v_target,
-        #     h=h_tgt // self.patch_size,
-        #     w=w_tgt // self.patch_size,
-        #     p1=self.patch_size,
-        #     p2=self.patch_size,
-        #     c=768,
-        # )
-
-        # if timeit:
-        #     torch.cuda.synchronize()
-        #     end_time = time.time()
-        #     return rendered_images, end_time - start_time
-        # return rendered_images
+        if timeit:
+            torch.cuda.synchronize()
+            end_time = time.time()
+            return rendered_images, end_time - start_time
+        return rendered_images
 
 
 class CrossAttentionRendererCore(nn.Module):

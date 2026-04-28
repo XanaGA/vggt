@@ -260,25 +260,6 @@ class Aggregator(nn.Module):
         W = H
         features = features.view(B * S, HW, D)
 
-        # if C_in != 3:
-        #     raise ValueError(f"Expected 3 input channels, got {C_in}")
-
-        # # Normalize images and reshape for patch embed
-        # images = (images - self._resnet_mean) / self._resnet_std
-
-        # # Reshape to [B*S, C, H, W] for patch embedding
-        # images = images.view(B * S, C_in, H, W)
-        # patch_tokens = self.patch_embed(images)
-
-        # if isinstance(patch_tokens, dict):
-        #     patch_tokens = patch_tokens["x_norm_patchtokens"]
-
-        # if self.patch_embed_additional is not None:
-        #     patch_tokens = patch_tokens + self.patch_embed_additional(images)
-
-        # _, P, C = patch_tokens.shape
-        
-
         # Expand camera and register tokens to match batch size and sequence length
         camera_token = slice_expand_and_flatten(self.camera_token, B, S)
         register_token = slice_expand_and_flatten(self.register_token, B, S)

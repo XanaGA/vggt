@@ -7,7 +7,12 @@
 import einops
 import torch
 import torch.nn as nn
-import xformers.ops as xops
+import torch.nn.functional as F
+
+try:
+    import xformers.ops as xops
+except ImportError:
+    xops = None
 
 
 def _get_flash_attention_ops():
@@ -15,8 +20,9 @@ def _get_flash_attention_ops():
 
     Returns Flash Attention 3 ops for H100 (compute capability >= 9.0),
     otherwise returns Flash Attention 2 ops.
+    Returns None if xformers is not installed or CUDA is unavailable.
     """
-    if not torch.cuda.is_available():
+    if xops is None or not torch.cuda.is_available():
         return None
 
     # Get compute capability of current device
@@ -98,13 +104,25 @@ class Attention(nn.Module):
         if self.use_qk_norm:
             q, k = self.q_norm(q), self.k_norm(k)
 
-        x = xops.memory_efficient_attention(
-            q,
-            k,
-            v,
-            p=self.attn_dropout if self.training else 0.0,
-            op=self.flash_attn_ops,
-        )
+        if xops is not None:
+            x = xops.memory_efficient_attention(
+                q,
+                k,
+                v,
+                p=self.attn_dropout if self.training else 0.0,
+                op=self.flash_attn_ops,
+            )
+        else:
+            # (b, l, nh, dh) -> (b, nh, l, dh) for torch SDPA
+            q, k, v = (t.transpose(1, 2) for t in (q, k, v))
+            x = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                dropout_p=self.attn_dropout if self.training else 0.0,
+                is_causal=False,
+            )
+            x = x.transpose(1, 2)
 
         x = einops.rearrange(x, "b n h d -> b n (h d)")
 
