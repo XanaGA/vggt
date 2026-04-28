@@ -5,7 +5,7 @@
 # https://github.com/facebookresearch/vggt/blob/main/LICENSE.txt
 
 import logging
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
 import einops
 import torch
@@ -328,9 +328,9 @@ class Aggregator(nn.Module):
     def prune_agg_no_pose(self) -> None:
         """Drop weights only used by :meth:`forward` (RGB → patch_embed path).
 
-        :meth:`forward_features` consumes precomputed tokens ``[B, S, H*W, D]`` and only
+        :meth:`forward_features` consumes precomputed tokens [B, S, H*W, D] and only
         needs camera/register parameters, RoPE helpers, and frame/global blocks. This
-        removes ``patch_embed``, ``patch_embed_additional`` (if any), and ImageNet
+        removes patch_embed, patch_embed_additional (if any), and ImageNet
         normalization buffers to free memory and optimizer state.
         """
         for name in ("patch_embed", "patch_embed_additional"):
@@ -497,6 +497,59 @@ class Aggregator(nn.Module):
             intermediates.append(tokens.view(B, S, P, C))
 
         return tokens, global_idx, intermediates
+
+
+def keep_aggregator_block_indices(aggregator: Aggregator, block_indices: Sequence[int]) -> None:
+    """Keep only the given block indices in frame_blocks and global_blocks.
+
+    Both ModuleLists are replaced with [blocks[i] for i in block_indices].
+    depth and aa_block_num are updated so :meth:`Aggregator.forward` and
+    :meth:`Aggregator.forward_features` remain valid.
+
+    Args:
+        aggregator: A constructed :class:`Aggregator` (e.g. VGGT().aggregator).
+        block_indices: Original 0-based indices, in run order. Must be unique and
+            in [0, len(frame_blocks)). len(block_indices) must be divisible
+            by aggregator.aa_block_size.
+
+    Raises:
+        ValueError: On invalid indices or incompatible depth / aa_block_size.
+    """
+    if not isinstance(block_indices, (list, tuple)):
+        block_indices = list(block_indices)
+    n_orig = len(aggregator.frame_blocks)
+    if len(aggregator.global_blocks) != n_orig:
+        raise ValueError(
+            f"frame_blocks ({n_orig}) and global_blocks ({len(aggregator.global_blocks)}) length mismatch"
+        )
+    if not block_indices:
+        raise ValueError("block_indices must be non-empty")
+    if len(set(block_indices)) != len(block_indices):
+        raise ValueError(f"block_indices must be unique, got {block_indices}")
+    for i in block_indices:
+        if not isinstance(i, int) or i < 0 or i >= n_orig:
+            raise ValueError(
+                f"block_indices must be ints in [0, {n_orig}), invalid entry: {i!r}"
+            )
+    new_depth = len(block_indices)
+    if new_depth % aggregator.aa_block_size != 0:
+        raise ValueError(
+            f"len(block_indices) ({new_depth}) must be divisible by aa_block_size ({aggregator.aa_block_size})"
+        )
+    aggregator.frame_blocks = nn.ModuleList(
+        [aggregator.frame_blocks[i] for i in block_indices]
+    )
+    aggregator.global_blocks = nn.ModuleList(
+        [aggregator.global_blocks[i] for i in block_indices]
+    )
+    aggregator.depth = new_depth
+    aggregator.aa_block_num = new_depth // aggregator.aa_block_size
+    logger.info(
+        "Aggregator blocks pruned: kept %s of %s layers (new depth=%s)",
+        block_indices,
+        n_orig,
+        new_depth,
+    )
 
 
 def slice_expand_and_flatten(token_tensor, B, S):
